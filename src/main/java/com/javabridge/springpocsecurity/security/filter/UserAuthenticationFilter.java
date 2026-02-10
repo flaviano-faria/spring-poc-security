@@ -24,31 +24,48 @@ import java.util.Optional;
 public class UserAuthenticationFilter extends OncePerRequestFilter {
 
     @Autowired
-    private JwtTokenService jwtTokenService; // Service que definimos anteriormente
+    private JwtTokenService jwtTokenService;
 
     @Autowired
     private UserRepository userRepository;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
+        // Skip authentication for public endpoints
+        if (!checkIfEndpointIsNotPublic(request)) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
-        if(checkIfEndpointIsNotPublic(request)){
-            String token = recoveryToken(request);
-            if(token != null){
+        // Extract and validate JWT token
+        String token = recoveryToken(request);
+        if (token != null) {
+            try {
+                // Validate token and extract username
                 String subject = jwtTokenService.getUsernameFromToken(token);
                 Optional<User> user = userRepository.findByEmail(subject);
-                UserDetailsImpl userDetails = new UserDetailsImpl(user.get());
-
-                Authentication authentication =
-                        new UsernamePasswordAuthenticationToken(
-                                userDetails.getUsername(), null,
-                                userDetails.getAuthorities());
-
-                SecurityContextHolder.getContext().setAuthentication(authentication);
-            } else{
-                filterChain.doFilter(request, response);
+                
+                if (user.isPresent()) {
+                    UserDetailsImpl userDetails = new UserDetailsImpl(user.get());
+                    
+                    // Create authentication object
+                    Authentication authentication = new UsernamePasswordAuthenticationToken(
+                            userDetails.getUsername(),
+                            null,
+                            userDetails.getAuthorities()
+                    );
+                    
+                    // Set authentication in security context
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
+            } catch (Exception e) {
+                // Token validation failed - let Spring Security handle unauthorized access
+                SecurityContextHolder.clearContext();
             }
         }
+        
+        // Continue filter chain
+        filterChain.doFilter(request, response);
     }
 
     private String recoveryToken(HttpServletRequest request) {
